@@ -1,0 +1,107 @@
+frameSize = 256;
+
+deviceReader = audioDeviceReader;
+setup(deviceReader);
+
+fileWriter = dsp.AudioFileWriter(...
+    'VirangsSpeech.wav',...
+    'FileFormat','WAV');
+
+disp('Speak into microphone now.')
+tic;
+while toc < 10
+    acquiredAudio = deviceReader();
+    fileWriter(acquiredAudio);
+end
+disp('Recording complete.')
+
+release(deviceReader);
+release(fileWriter);
+
+
+
+
+
+fileReader = dsp.AudioFileReader( ...
+    'VirangsSpeech.wav', ...
+    'SamplesPerFrame',frameSize);
+
+sampleRate = fileReader.SampleRate;
+
+deviceWriter = audioDeviceWriter( ...
+    'SampleRate',sampleRate);
+
+setup(fileReader);
+setup(deviceWriter,ones(frameSize,2));
+
+count = 0;
+while count < 2500
+    audio = fileReader();
+    deviceWriter(audio);
+    count = count+1;
+end
+reset(fileReader);
+
+[B,A] = designVarSlopeFilter(24,0.10);
+
+SOS = [B',[ones(4,1),A']];
+fvtool(SOS, ...
+    'Fs',sampleRate);
+
+myFilter = dsp.BiquadFilter( ...
+    'SOSMatrixSource','Input port', ...
+    'ScaleValuesInputPort',false);
+
+scope = dsp.SpectrumAnalyzer( ...
+    'SampleRate',sampleRate, ...
+    'PlotAsTwoSidedSpectrum',false, ...
+    'FrequencyScale','Log', ...
+    'FrequencyResolutionMethod','WindowLength', ...
+    'WindowLength',frameSize, ...
+    'Title','Original and Equalized Signal', ...
+    'ShowLegend',true, ...
+    'ChannelNames',{'Original Signal','Filtered Signal'});
+
+setup(scope,ones(frameSize,2));
+count = 0;
+while count < 2500
+    originalSignal = fileReader();
+    filteredSignal = myFilter(originalSignal,B,A);
+    scope([originalSignal(:,1),filteredSignal(:,1)]);
+    deviceWriter(filteredSignal);
+    count = count+1;
+end
+
+fileReader = dsp.AudioFileReader('VirangsSpeech.wav');
+fs = fileReader.SampleRate;
+fileReader.SamplesPerFrame = ceil(10e-3*fs);
+
+VAD = voiceActivityDetector;
+
+
+scope = dsp.TimeScope( ...
+    'NumInputPorts',2, ...
+    'SampleRate',sampleRate, ...
+    'TimeSpan',3, ...
+    'BufferLength',3*sampleRate, ...
+    'YLimits',[-1.5 1.5], ...
+    'TimeSpanOverrunAction','Scroll', ...
+    'ShowLegend',true, ...
+    'ChannelNames',{'Audio','Probability of speech presence'});
+deviceWriter = audioDeviceWriter('SampleRate',fs);
+
+Y = "Presence of Voice Detected";
+N = "No Voice Detected";
+
+while ~isDone(fileReader)
+    audioIn = fileReader();
+    probability = VAD(audioIn);
+    if probability > 0.9
+        disp(Y);
+    else
+        disp(N);
+    end
+    scope(audioIn,probability*ones(fileReader.SamplesPerFrame,1))
+    deviceWriter(audioIn);
+end
+
